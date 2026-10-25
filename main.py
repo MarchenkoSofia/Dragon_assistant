@@ -23,6 +23,23 @@ from PyQt5.QtGui import QMovie, QPixmap, QPainter, QFont, QCursor, QTransform
 from brain import ConfigManager, DragonBrain
 from app_scanner import AbsoluteAppScanner
 from settings_ui import SettingsDialog
+import create_dragon_gifs
+
+# Анимации состояний: создаются create_dragon_gifs.py и лежат в gifs/
+GIF_FILES = {
+    "FLYING": "gifs/flying.gif",
+    "TO_MOUSE": "gifs/to_mouse.gif",
+    "SLEEPING": "gifs/sleeping.gif",
+    "EATING": "gifs/eating.gif",
+    "WINDOW_WALK": "gifs/window_walk.gif",
+    "BOTTOM_WALK": "gifs/bottom_walk.gif",
+    "DRAGGING_WIN": "gifs/dragging_win.gif",
+    "LANDING": "gifs/landing.gif",
+    "MEDIA": "gifs/media.gif",
+    "APP": "gifs/app.gif",
+    "CAMERA": "gifs/camera.gif",
+    "SEARCH": "gifs/search.gif",
+}
 
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
 logging.basicConfig(
@@ -390,13 +407,17 @@ class DragonPet(QWidget):
         self.hunger = 15
         self.is_manual_dragging = False
         self.last_interaction = time.time()
+        self.visual_state = "FLYING"
+        self.movie: Optional[QMovie] = None
+        self.current_gif = ""
 
         self.init_ui()
         self.init_timers()
         self.init_voice()
 
         self.hud.append_dragon(
-            f"{self.pet_name} в строю. В базе {len(self.scanner.apps)} программ.")
+            f"{self.pet_name} в строю: {len(self.scanner.apps)} программ, "
+            f"анимаций состояний: {self.active_animations()}.")
 
     @property
     def pet_name(self) -> str:
@@ -411,22 +432,84 @@ class DragonPet(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.avatar = QLabel(self)
-        self.movie = QMovie(self.cfg.settings.get("sprite_file", "dragon.gif"))
-        if self.movie.isValid():
-            self.avatar.setMovie(self.movie)
-            self.movie.start()
-        else:
-            self.set_icon(self._icon("FLYING"))
-
         layout.addWidget(self.avatar, alignment=Qt.AlignCenter)
         sz = int(self.cfg.settings.get("dragon_size", 110))
         self.resize(sz, sz)
         self.move(int(self.pos_x), int(self.pos_y))
+        self.set_visual_state("FLYING")
 
     def _icon(self, key: str) -> str:
         return self.cfg.settings.get("icons", {}).get(key, "🐲")
 
-    def set_icon(self, icon_str: str, flip: bool = False) -> None:
+    def _gif_path(self, key: str) -> str:
+        """Где брать анимацию: override из settings["gifs"], затем gifs/<state>.gif,
+        в конце — sprite_file (одна гифка на все случаи, если своя)."""
+        path = self.cfg.settings.get("gifs", {}).get(key)
+        if path:
+            return path
+        path = GIF_FILES.get(key)
+        if path and os.path.isfile(path):
+            return path
+        return self.cfg.settings.get("sprite_file", "dragon.gif")
+
+    def active_animations(self) -> int:
+        """Сколько состояний сейчас закрыты настоящей анимацией, а не эмодзи."""
+        return sum(1 for key in GIF_FILES if os.path.isfile(self._gif_path(key)))
+
+    def set_visual_state(self, state_key: str, temporary_ms: int = 0) -> None:
+        """Показывает анимацию состояния; temporary_ms — короткое действие и возврат к состоянию."""
+        self.visual_state = state_key
+        gif_file = self._gif_path(state_key)
+
+        if gif_file != self.current_gif:
+            if self.movie:
+                self.movie.stop()
+                try:
+                    self.movie.frameChanged.disconnect()
+                except Exception:
+                    pass
+                self.movie = None
+                self.current_gif = ""
+            if os.path.isfile(gif_file):
+                candidate = QMovie(gif_file)
+                if candidate.isValid():
+                    self.movie = candidate
+                    self.current_gif = gif_file
+                    self.movie.frameChanged.connect(self._render_movie_frame)
+                    self.movie.start()
+        self._render_avatar()
+
+        if temporary_ms > 0:
+            QTimer.singleShot(
+                temporary_ms, lambda: self.set_visual_state(self.state))
+
+    def set_facing(self, right: bool) -> None:
+        """Разворачивает спрайт по направлению движения."""
+        if self.facing_right == right:
+            return
+        self.facing_right = right
+        self._render_avatar()
+
+    def _render_avatar(self) -> None:
+        """Рисует кадр GIF, а если анимации нет — эмодзи состояния."""
+        if self.movie:
+            self._render_movie_frame()
+        else:
+            self._render_emoji(self._icon(self.visual_state))
+
+    def _render_movie_frame(self) -> None:
+        if not self.movie:
+            return
+        pix = self.movie.currentPixmap()
+        if pix.isNull():
+            return
+        sz = int(self.cfg.settings.get("dragon_size", 110))
+        if not self.facing_right:
+            pix = pix.transformed(QTransform().scale(-1, 1))
+        self.avatar.setPixmap(pix.scaled(
+            sz, sz, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _render_emoji(self, icon_str: str) -> None:
         sz = int(self.cfg.settings.get("dragon_size", 110)) - 20
         pixmap = QPixmap(max(50, sz), max(50, sz))
         pixmap.fill(Qt.transparent)
@@ -434,7 +517,7 @@ class DragonPet(QWidget):
         p.setFont(QFont("Segoe UI Emoji", int(sz * 0.48)))
         p.drawText(pixmap.rect(), Qt.AlignCenter, icon_str)
         p.end()
-        if flip:
+        if not self.facing_right:
             pixmap = pixmap.transformed(QTransform().scale(-1, 1))
         self.avatar.setPixmap(pixmap)
 
@@ -442,8 +525,8 @@ class DragonPet(QWidget):
         """Вызывается при движении ползунков в окне настроек."""
         sz = int(self.cfg.settings.get("dragon_size", 110))
         self.resize(sz, sz)
-        if not self.movie.isValid():
-            self.set_icon(self._icon(self.state), flip=not self.facing_right)
+        # анимацию перечитываем: путь мог поменяться, кадр нужен уже нового размера
+        self.set_visual_state(self.visual_state)
         self.hud.apply_dynamic_styles()
 
     def open_settings_dialog(self) -> None:
@@ -516,29 +599,29 @@ class DragonPet(QWidget):
         if action == "EXIT":
             self.clean_exit()
         elif action == "CUSTOM_APP":
-            self.set_icon(self._icon("APP"))
+            self.set_visual_state("APP", temporary_ms=3200)
         elif action == "OPEN_URL":
             webbrowser.open(payload)
-            self.set_icon(self._icon("APP"))
+            self.set_visual_state("APP", temporary_ms=3200)
         elif action == "WEB_SEARCH" and payload:
             url = self.cfg.settings.get(
                 "search_engine_url", "https://www.google.com/search?q=") + urllib.parse.quote(payload)
             webbrowser.open(url)
-            self.set_icon(self._icon("SEARCH"))
+            self.set_visual_state("SEARCH", temporary_ms=3500)
         elif action == "MEDIA_PAUSE":
             send_key_event(VK_MEDIA_PLAY_PAUSE)
-            self.set_icon(self._icon("MEDIA"))
+            self.set_visual_state("MEDIA", temporary_ms=3200)
         elif action == "VOL_UP":
             for _ in range(4):
                 send_key_event(VK_VOLUME_UP)
-            self.set_icon("🔊")
+            self.set_visual_state("MEDIA", temporary_ms=2500)
         elif action == "VOL_DOWN":
             for _ in range(4):
                 send_key_event(VK_VOLUME_DOWN)
-            self.set_icon("🔉")
+            self.set_visual_state("MEDIA", temporary_ms=2500)
         elif action == "VOL_MUTE":
             send_key_event(VK_VOLUME_MUTE)
-            self.set_icon("🔇")
+            self.set_visual_state("MEDIA", temporary_ms=2500)
         elif action == "LOCK_PC":
             user32.LockWorkStation()
         elif action == "SCREENSHOT":
@@ -550,12 +633,12 @@ class DragonPet(QWidget):
                     screen.grabWindow(0).save(os.path.join(desktop, fname), "png")
                     self.hud.append_dragon(
                         f"Скриншот готов: {fname}", timestamp)
-                self.set_icon(self._icon("CAMERA"))
+                self.set_visual_state("CAMERA", temporary_ms=3000)
             except Exception as e:
                 log_msg(f"Ошибка скриншота: {e}", "error")
         elif action == "MINIMIZE_ALL":
             minimize_all_windows()
-            self.set_icon(self._icon("FLYING"))
+            self.set_visual_state("FLYING")
         elif action == "MINIMIZE_WINDOW":
             hwnd, _ = get_foreground_window()
             if hwnd and user32.IsWindow(hwnd):
@@ -574,16 +657,16 @@ class DragonPet(QWidget):
                 self.drag_hwnd, self.drag_win_w, self.drag_win_h = hwnd, rect[2], rect[3]
                 self.drag_steps = 70
                 self.state = "DRAGGING_WIN"
-                self.set_icon(self._icon("DRAGGING_WIN"))
+                self.set_visual_state("DRAGGING_WIN")
             else:
                 self.hud.append_dragon("Окно не выбрано.", timestamp)
         elif action == "FLY_UP":
             self.state = "FLYING"
             self.target_vy = -3.0
-            self.set_icon(self._icon("FLYING"))
+            self.set_visual_state("FLYING")
         elif action == "TO_MOUSE":
             self.state = "TO_MOUSE"
-            self.set_icon(self._icon("TO_MOUSE"))
+            self.set_visual_state("TO_MOUSE")
         elif action == "LAND_BOTTOM":
             self.start_landing("BOTTOM", "BOTTOM_WALK")
         elif action == "LAND_WINDOW":
@@ -613,7 +696,7 @@ class DragonPet(QWidget):
         self.target_pos = (tx, ty)
         self.next_state = next_state
         self.state = "LANDING"
-        self.set_icon(self._icon("LANDING"))
+        self.set_visual_state("LANDING")
 
     def autonomous_cycle(self) -> None:
         if self.is_manual_dragging or self.state in ("LANDING", "DRAGGING_WIN", "TO_MOUSE"):
@@ -632,7 +715,7 @@ class DragonPet(QWidget):
             if self.energy >= 90:
                 self.hud.append_dragon("Проснулся. Взлетаю.")
                 self.state = "FLYING"
-                self.set_icon(self._icon("FLYING"))
+                self.set_visual_state("FLYING")
             return
 
         if self.hunger > 75 and self.state != "EATING":
@@ -645,7 +728,7 @@ class DragonPet(QWidget):
             self.energy += 25
             self.hud.append_dragon("Подкрепился.")
             self.state = "FLYING"
-            self.set_icon(self._icon("FLYING"))
+            self.set_visual_state("FLYING")
 
     def physics_loop(self) -> None:
         if self.is_manual_dragging:
@@ -688,14 +771,10 @@ class DragonPet(QWidget):
                 self.pos_y = max(
                     10.0, min(float(screen.height() - self.height() - 40), self.pos_y + self.vy))
 
-                if self.vx > 0.3 and not self.facing_right:
-                    self.facing_right = True
-                    if not self.movie.isValid():
-                        self.set_icon(self._icon("FLYING"), flip=False)
-                elif self.vx < -0.3 and self.facing_right:
-                    self.facing_right = False
-                    if not self.movie.isValid():
-                        self.set_icon(self._icon("FLYING"), flip=True)
+                if self.vx > 0.3:
+                    self.set_facing(True)
+                elif self.vx < -0.3:
+                    self.set_facing(False)
 
                 visual_y = self.pos_y + \
                     math.sin(self.tick_count * 0.06) * wave_amp
@@ -710,21 +789,15 @@ class DragonPet(QWidget):
                     self.pos_x += (dx / dist) * step
                     self.pos_y += (dy / dist) * step
 
-                    if dx > 5 and not self.facing_right:
-                        self.facing_right = True
-                        if not self.movie.isValid():
-                            self.set_icon(self._icon("TO_MOUSE"), flip=False)
-                    elif dx < -5 and self.facing_right:
-                        self.facing_right = False
-                        if not self.movie.isValid():
-                            self.set_icon(self._icon("TO_MOUSE"), flip=True)
+                    if abs(dx) > 5:
+                        self.set_facing(dx > 0)
 
                     self.move(int(self.pos_x), int(self.pos_y))
                 else:
                     self.state = "FLYING"
                     self.target_vx = cruise
                     self.target_vy = 0.5
-                    self.set_icon(self._icon("FLYING"))
+                    self.set_visual_state("FLYING")
 
             elif self.state == "DRAGGING_WIN":
                 if self.drag_steps > 0 and self.drag_hwnd and user32.IsWindow(self.drag_hwnd):
@@ -736,7 +809,7 @@ class DragonPet(QWidget):
                         self.pos_y) + 70, self.drag_win_w, self.drag_win_h, True)
                 else:
                     self.state = "FLYING"
-                    self.set_icon(self._icon("FLYING"))
+                    self.set_visual_state("FLYING")
 
             elif self.state == "LANDING":
                 if not self.target_pos:
@@ -748,7 +821,7 @@ class DragonPet(QWidget):
                     self.pos_x, self.pos_y = float(tx), float(ty)
                     self.move(tx, ty)
                     self.state = self.next_state or "FLYING"
-                    self.set_icon(self._icon(self.state))
+                    self.set_visual_state(self.state)
                 else:
                     self.pos_x += max(-cruise, min(cruise, dx * 0.08))
                     self.pos_y += max(-cruise, min(cruise, dy * 0.08))
@@ -768,6 +841,7 @@ class DragonPet(QWidget):
                     self.move(int(self.pos_x), int(self.pos_y))
                 else:
                     self.state = "FLYING"
+                    self.set_visual_state("FLYING")
 
             elif self.state == "BOTTOM_WALK":
                 self.pos_x += (1.5 if self.facing_right else -1.5)
@@ -800,6 +874,15 @@ class DragonPet(QWidget):
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+    # Если комплекта анимаций ещё нет — рисуем его сами (нужен Pillow).
+    # Без Pillow дракон летает с эмодзи-иконкой, программа при этом не падает.
+    if not os.path.exists(GIF_FILES["FLYING"]):
+        try:
+            create_dragon_gifs.generate_all_gifs()
+        except Exception as e:
+            log_msg(f"Не удалось сгенерировать анимации: {e}", "error")
+
     app = QApplication(sys.argv)
 
     cfg_mgr = ConfigManager()
