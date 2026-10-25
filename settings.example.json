@@ -2,7 +2,7 @@
   "pet_name": "Игнис",
   "user_name": "",
   "sprite_file": "dragon.gif",
-  "lm_studio_url": "http://192.168.31.79:1234/v1/chat/completions",
+  "lm_studio_url": "http://127.0.0.1:1234/v1/chat/completions",
   "local_model": "qwen/qwen3.5-9b",
   "request_timeout": 25,
   "temperature": 0.7,

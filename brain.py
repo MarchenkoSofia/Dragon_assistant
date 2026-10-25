@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import shutil
 import logging
 from datetime import datetime
 from typing import Tuple, List, Dict, Any
@@ -10,6 +11,7 @@ from app_scanner import AbsoluteAppScanner
 
 HISTORY_FILE = "chat_history.json"
 COMMANDS_CONFIG_FILE = "commands_config.json"
+SETTINGS_EXAMPLE_FILE = "settings.example.json"
 
 
 class ConfigManager:
@@ -18,9 +20,28 @@ class ConfigManager:
     def __init__(self, settings_path: str = "settings.json", commands_path: str = COMMANDS_CONFIG_FILE) -> None:
         self.settings_path = settings_path
         self.commands_path = commands_path
+        self._ensure_settings()
         self.settings: Dict[str, Any] = self._load_json(self.settings_path, {})
         self.commands_cfg: Dict[str, Any] = self._load_json(
             self.commands_path, {})
+
+    def _ensure_settings(self) -> None:
+        """Если settings.json нет, создаём его из settings.example.json."""
+        if os.path.exists(self.settings_path):
+            return
+        example = os.path.join(
+            os.path.dirname(self.settings_path) or ".",
+            SETTINGS_EXAMPLE_FILE)
+        if not os.path.exists(example):
+            logging.warning(
+                f"{self.settings_path} и {example} отсутствуют — беру значения по умолчанию")
+            return
+        try:
+            shutil.copyfile(example, self.settings_path)
+            logging.info(
+                f"Создан {self.settings_path} из {SETTINGS_EXAMPLE_FILE}")
+        except Exception as e:
+            logging.error(f"Не удалось создать {self.settings_path}: {e}")
 
     @staticmethod
     def _load_json(path: str, default: Any) -> Any:

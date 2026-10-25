@@ -8,6 +8,9 @@ venv/
 __pycache__/
 *.py[cod]
 
+# Рабочие настройки пользователя: создаются из settings.example.json при первом запуске
+settings.json
+
 # Артефакты работы дракона (логи, история диалогов и кэш путей к .exe создаются во время запуска)
 dragon.log
 chat_history.json
