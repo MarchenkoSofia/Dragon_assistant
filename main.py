@@ -33,6 +33,16 @@ logging.basicConfig(
 )
 
 
+def log_msg(msg: str, level: str = "info") -> None:
+    print(msg)
+    if level == "error":
+        logging.error(msg)
+    elif level == "warning":
+        logging.warning(msg)
+    else:
+        logging.info(msg)
+
+
 def exception_hook(exctype, value, tb):
     logging.critical("КРИТИЧЕСКИЙ СБОЙ!", exc_info=(exctype, value, tb))
     sys.__excepthook__(exctype, value, tb)
@@ -51,6 +61,7 @@ def is_admin() -> bool:
 
 
 if not is_admin():
+    log_msg("Запрос прав Администратора...")
     params = " ".join([f'"{arg}"' for arg in sys.argv])
     ctypes.windll.shell32.ShellExecuteW(
         None, "runas", sys.executable, params, None, 1)
@@ -79,15 +90,18 @@ def get_foreground_window() -> Tuple[Optional[int], Optional[Tuple[int, int, int
             w, h = rect.right - rect.left, rect.bottom - rect.top
             if w > 200 and h > 150:
                 return hwnd, (rect.left, rect.top, w, h)
-    except Exception:
-        pass
+    except Exception as e:
+        log_msg(f"Ошибка получения окна: {e}", "warning")
     return None, None
 
 
 def send_key_event(vk_code: int) -> None:
-    user32.keybd_event(vk_code, 0, 0, 0)
-    time.sleep(0.05)
-    user32.keybd_event(vk_code, 0, 2, 0)
+    try:
+        user32.keybd_event(vk_code, 0, 0, 0)
+        time.sleep(0.05)
+        user32.keybd_event(vk_code, 0, 2, 0)
+    except Exception as e:
+        log_msg(f"Ошибка нажатия клавиши {vk_code}: {e}", "error")
 
 
 def minimize_all_windows() -> None:
@@ -142,6 +156,7 @@ class CornerChatHUD(QWidget):
         header.addStretch()
 
         self.mic_btn = QPushButton("🎙️")
+        self.mic_btn.setToolTip("Включить/выключить микрофон")
         self.mic_btn.setFixedSize(28, 24)
         self.mic_btn.clicked.connect(self.mic_toggled.emit)
         header.addWidget(self.mic_btn)
@@ -150,21 +165,26 @@ class CornerChatHUD(QWidget):
         self.settings_btn.setToolTip("Открыть настройки с ползунками")
         self.settings_btn.setFixedSize(28, 24)
         self.settings_btn.setStyleSheet(
-            "QPushButton { background: rgba(70, 70, 90, 220); color: white; border-radius: 5px; }")
+            "QPushButton { background: rgba(70, 70, 90, 220); color: white; border: none; border-radius: 5px; font-size: 12px; } "
+            "QPushButton:hover { background: rgba(90, 90, 115, 240); }")
         self.settings_btn.clicked.connect(self.settings_requested.emit)
         header.addWidget(self.settings_btn)
 
         self.toggle_chat_btn = QPushButton("💬")
+        self.toggle_chat_btn.setToolTip("Свернуть/развернуть чат")
         self.toggle_chat_btn.setFixedSize(28, 24)
         self.toggle_chat_btn.setStyleSheet(
-            "QPushButton { background: rgba(55, 60, 100, 220); color: white; border-radius: 5px; }")
+            "QPushButton { background: rgba(55, 60, 100, 220); color: white; border: none; border-radius: 5px; font-size: 12px; } "
+            "QPushButton:hover { background: rgba(75, 80, 130, 240); }")
         self.toggle_chat_btn.clicked.connect(self.toggle_chat_view)
         header.addWidget(self.toggle_chat_btn)
 
         self.exit_btn = QPushButton("❌")
+        self.exit_btn.setToolTip("Выключить дракона")
         self.exit_btn.setFixedSize(28, 24)
         self.exit_btn.setStyleSheet(
-            "QPushButton { background: rgba(130, 30, 30, 220); color: white; border-radius: 5px; }")
+            "QPushButton { background: rgba(130, 30, 30, 220); color: white; border: none; border-radius: 5px; font-size: 11px; } "
+            "QPushButton:hover { background: rgba(180, 40, 40, 240); }")
         self.exit_btn.clicked.connect(self.exit_requested.emit)
         header.addWidget(self.exit_btn)
 
@@ -173,7 +193,9 @@ class CornerChatHUD(QWidget):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setStyleSheet(
-            "background: transparent; color: #ECEFF1; border: none; font-size: 12px;")
+            "background: transparent; color: #ECEFF1; border: none; "
+            "font-family: 'Segoe UI', sans-serif; font-size: 12px; line-height: 1.4;"
+        )
         self.c_layout.addWidget(self.log_text)
 
         self.input_widget = QWidget()
@@ -182,9 +204,11 @@ class CornerChatHUD(QWidget):
         in_layout.setSpacing(6)
 
         self.text_input = QLineEdit()
-        self.text_input.setPlaceholderText("Команда, вопрос или программа...")
+        self.text_input.setPlaceholderText("Команда, вопрос или приложение...")
         self.text_input.setStyleSheet(
-            "QLineEdit { background: rgba(30, 30, 45, 230); color: #FFF; border: 1px solid #555; border-radius: 6px; padding: 4px 8px; }"
+            "QLineEdit { background: rgba(30, 30, 45, 230); color: #FFF; "
+            "border: 1px solid #555; border-radius: 6px; padding: 4px 8px; font-size: 11px; } "
+            "QLineEdit:focus { border: 1px solid #FF9900; }"
         )
         self.text_input.returnPressed.connect(self.send_text_message)
         in_layout.addWidget(self.text_input)
@@ -192,7 +216,8 @@ class CornerChatHUD(QWidget):
         self.send_btn = QPushButton("➤")
         self.send_btn.setFixedSize(30, 26)
         self.send_btn.setStyleSheet(
-            "QPushButton { background: rgba(220, 120, 20, 220); color: white; border-radius: 6px; font-weight: bold; }")
+            "QPushButton { background: rgba(220, 120, 20, 220); color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: bold; } "
+            "QPushButton:hover { background: rgba(255, 140, 30, 240); }")
         self.send_btn.clicked.connect(self.send_text_message)
         in_layout.addWidget(self.send_btn)
 
@@ -236,16 +261,19 @@ class CornerChatHUD(QWidget):
             self.text_input.clear()
             self.text_command_sent.emit(t)
 
+    def set_status(self, text: str) -> None:
+        self.status_label.setText(text)
+
     def update_mic_status(self, is_muted: bool) -> None:
         if is_muted:
             self.mic_btn.setText("🔇")
             self.mic_btn.setStyleSheet(
-                "QPushButton { background: rgba(110, 35, 35, 220); color: white; border-radius: 5px; }")
+                "QPushButton { background: rgba(110, 35, 35, 220); color: white; border: none; border-radius: 5px; }")
             self.status_label.setText("Микрофон ВЫКЛ")
         else:
             self.mic_btn.setText("🎙️")
             self.mic_btn.setStyleSheet(
-                "QPushButton { background: rgba(35, 95, 45, 220); color: white; border-radius: 5px; }")
+                "QPushButton { background: rgba(35, 95, 45, 220); color: white; border: none; border-radius: 5px; }")
             self.status_label.setText("Слушает...")
 
     def append_user(self, text: str, timestamp: str = "") -> None:
@@ -268,7 +296,7 @@ class CornerChatHUD(QWidget):
             self.log_text.verticalScrollBar().maximum())
 
 
-# --- ФОНОВЫЙ СЛУШАТЕЛЬ РЕЧИ ---
+# --- ФОНОВЫЙ СЛУШАТЕЛЬ РЕЧИ / ВВОДА ---
 class VoiceListener(QObject):
     user_spoke_signal = pyqtSignal(str, str)
     dragon_reply_signal = pyqtSignal(str, str, str, str)
@@ -282,6 +310,7 @@ class VoiceListener(QObject):
 
     def toggle_mute(self) -> bool:
         self.is_muted = not self.is_muted
+        log_msg(f"Микрофон: is_muted={self.is_muted}")
         return self.is_muted
 
     def start_listening(self) -> None:
@@ -289,9 +318,11 @@ class VoiceListener(QObject):
 
     def process_input(self, text: str) -> None:
         t_in = datetime.now().strftime("%H:%M")
+        log_msg(f"Ввод пользователя: '{text}'")
         self.user_spoke_signal.emit(text, t_in)
         self.status_signal.emit("Думаю... 🧠")
         action, payload, reply = self.brain.process(text)
+        log_msg(f"Результат: action={action}, reply={reply}")
         t_out = datetime.now().strftime("%H:%M")
         self.dragon_reply_signal.emit(action, payload, reply, t_out)
 
@@ -302,6 +333,7 @@ class VoiceListener(QObject):
         rec.phrase_threshold = 0.3
         rec.non_speaking_duration = 0.5
 
+        log_msg("Поток микрофона активен")
         while self.running:
             if self.is_muted:
                 time.sleep(0.4)
@@ -316,12 +348,15 @@ class VoiceListener(QObject):
                             text = rec.recognize_google(
                                 audio, language="ru-RU").strip()
                             if text:
+                                log_msg(f"Услышано: '{text}'")
                                 self.process_input(text)
                         except (sr.WaitTimeoutError, sr.UnknownValueError):
                             continue
-                        except Exception:
+                        except Exception as e:
+                            log_msg(f"Ошибка распознавания: {e}", "warning")
                             time.sleep(0.3)
-            except Exception:
+            except Exception as e:
+                log_msg(f"Ошибка микрофона: {e}", "error")
                 time.sleep(2)
 
 
@@ -354,13 +389,18 @@ class DragonPet(QWidget):
         self.energy = 85
         self.hunger = 15
         self.is_manual_dragging = False
+        self.last_interaction = time.time()
 
         self.init_ui()
         self.init_timers()
         self.init_voice()
 
         self.hud.append_dragon(
-            f"Игнис в строю. В базе собрано {len(self.scanner.apps)} абсолютных путей к программам.")
+            f"{self.pet_name} в строю. В базе {len(self.scanner.apps)} программ.")
+
+    @property
+    def pet_name(self) -> str:
+        return self.cfg.settings.get("pet_name", "Игнис")
 
     def init_ui(self) -> None:
         self.setWindowFlags(Qt.FramelessWindowHint |
@@ -417,7 +457,7 @@ class DragonPet(QWidget):
         self.listener = VoiceListener(self.brain)
         self.listener.user_spoke_signal.connect(self.hud.append_user)
         self.listener.dragon_reply_signal.connect(self.execute_action)
-        self.listener.status_signal.connect(self.hud.status_label.setText)
+        self.listener.status_signal.connect(self.hud.set_status)
         self.listener.start_listening()
 
         self.hud.mic_toggled.connect(self.toggle_mic)
@@ -429,11 +469,19 @@ class DragonPet(QWidget):
         )
 
     def toggle_mic(self) -> None:
+        self.last_interaction = time.time()
         muted = self.listener.toggle_mute()
         self.hud.update_mic_status(muted)
+        if muted:
+            self.hud.append_dragon("Уши прикрыл, не подслушиваю.")
+        else:
+            self.hud.append_dragon("Слушаю.")
 
     def clean_exit(self) -> None:
+        log_msg("Выключение приложения")
         self.listener.running = False
+        self.hud.close()
+        self.close()
         os._exit(0)
 
     def init_timers(self) -> None:
@@ -461,6 +509,7 @@ class DragonPet(QWidget):
         self.target_vy = math.sin(angle) * 1.5
 
     def execute_action(self, action: str, payload: str, reply: str, timestamp: str) -> None:
+        self.last_interaction = time.time()
         if reply:
             self.hud.append_dragon(reply, timestamp)
 
@@ -482,32 +531,42 @@ class DragonPet(QWidget):
         elif action == "VOL_UP":
             for _ in range(4):
                 send_key_event(VK_VOLUME_UP)
+            self.set_icon("🔊")
         elif action == "VOL_DOWN":
             for _ in range(4):
                 send_key_event(VK_VOLUME_DOWN)
+            self.set_icon("🔉")
         elif action == "VOL_MUTE":
             send_key_event(VK_VOLUME_MUTE)
+            self.set_icon("🔇")
         elif action == "LOCK_PC":
             user32.LockWorkStation()
         elif action == "SCREENSHOT":
-            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-            fname = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            QApplication.primaryScreen().grabWindow(
-                0).save(os.path.join(desktop, fname), "png")
-            self.set_icon(self._icon("CAMERA"))
+            try:
+                desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+                fname = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                screen = QApplication.primaryScreen()
+                if screen:
+                    screen.grabWindow(0).save(os.path.join(desktop, fname), "png")
+                    self.hud.append_dragon(
+                        f"Скриншот готов: {fname}", timestamp)
+                self.set_icon(self._icon("CAMERA"))
+            except Exception as e:
+                log_msg(f"Ошибка скриншота: {e}", "error")
         elif action == "MINIMIZE_ALL":
             minimize_all_windows()
+            self.set_icon(self._icon("FLYING"))
         elif action == "MINIMIZE_WINDOW":
             hwnd, _ = get_foreground_window()
-            if hwnd:
+            if hwnd and user32.IsWindow(hwnd):
                 user32.ShowWindow(hwnd, 6)
         elif action == "MAXIMIZE_WINDOW":
             hwnd, _ = get_foreground_window()
-            if hwnd:
+            if hwnd and user32.IsWindow(hwnd):
                 user32.ShowWindow(hwnd, 3)
         elif action == "CLOSE_WINDOW":
             hwnd, _ = get_foreground_window()
-            if hwnd:
+            if hwnd and user32.IsWindow(hwnd):
                 user32.PostMessageW(hwnd, 0x0010, 0, 0)
         elif action == "DRAG_WINDOW":
             hwnd, rect = get_foreground_window()
@@ -516,6 +575,8 @@ class DragonPet(QWidget):
                 self.drag_steps = 70
                 self.state = "DRAGGING_WIN"
                 self.set_icon(self._icon("DRAGGING_WIN"))
+            else:
+                self.hud.append_dragon("Окно не выбрано.", timestamp)
         elif action == "FLY_UP":
             self.state = "FLYING"
             self.target_vy = -3.0
@@ -536,12 +597,19 @@ class DragonPet(QWidget):
         screen = QApplication.primaryScreen().availableGeometry()
         floor_y = screen.height() - self.height() - 10
         _, win = get_foreground_window()
-        if (target == "WINDOW" or target == "AUTO") and win:
+        if target == "WINDOW" and win:
             tx = max(win[0], min(int(self.pos_x),
                      win[0] + win[2] - self.width()))
             ty = max(10, win[1] - self.height() + 20)
-        else:
+        elif target == "BOTTOM":
             tx, ty = int(self.pos_x), floor_y
+        else:
+            if win:
+                tx = max(win[0], min(int(self.pos_x),
+                         win[0] + win[2] - self.width()))
+                ty = max(10, win[1] - self.height() + 20)
+            else:
+                tx, ty = int(self.pos_x), floor_y
         self.target_pos = (tx, ty)
         self.next_state = next_state
         self.state = "LANDING"
@@ -550,20 +618,32 @@ class DragonPet(QWidget):
     def autonomous_cycle(self) -> None:
         if self.is_manual_dragging or self.state in ("LANDING", "DRAGGING_WIN", "TO_MOUSE"):
             return
+
         self.hunger = min(100, self.hunger + 4)
         self.energy = max(0, self.energy - 3)
+
         if self.energy < 20 and self.state != "SLEEPING":
+            self.hud.append_dragon("Устал. Ушел спать 💤")
             self.start_landing("AUTO", "SLEEPING")
-        elif self.state == "SLEEPING":
+            return
+
+        if self.state == "SLEEPING":
             self.energy += 35
             if self.energy >= 90:
+                self.hud.append_dragon("Проснулся. Взлетаю.")
                 self.state = "FLYING"
                 self.set_icon(self._icon("FLYING"))
-        elif self.hunger > 75 and self.state != "EATING":
+            return
+
+        if self.hunger > 75 and self.state != "EATING":
+            self.hud.append_dragon("Голод не тетка. Ищу уголь 🔥")
             self.start_landing("AUTO", "EATING")
-        elif self.state == "EATING":
+            return
+
+        if self.state == "EATING":
             self.hunger = 0
             self.energy += 25
+            self.hud.append_dragon("Подкрепился.")
             self.state = "FLYING"
             self.set_icon(self._icon("FLYING"))
 
@@ -629,10 +709,21 @@ class DragonPet(QWidget):
                     step = min(dash_spd, max(3.0, dist * 0.16))
                     self.pos_x += (dx / dist) * step
                     self.pos_y += (dy / dist) * step
+
+                    if dx > 5 and not self.facing_right:
+                        self.facing_right = True
+                        if not self.movie.isValid():
+                            self.set_icon(self._icon("TO_MOUSE"), flip=False)
+                    elif dx < -5 and self.facing_right:
+                        self.facing_right = False
+                        if not self.movie.isValid():
+                            self.set_icon(self._icon("TO_MOUSE"), flip=True)
+
                     self.move(int(self.pos_x), int(self.pos_y))
                 else:
                     self.state = "FLYING"
                     self.target_vx = cruise
+                    self.target_vy = 0.5
                     self.set_icon(self._icon("FLYING"))
 
             elif self.state == "DRAGGING_WIN":
@@ -647,7 +738,10 @@ class DragonPet(QWidget):
                     self.state = "FLYING"
                     self.set_icon(self._icon("FLYING"))
 
-            elif self.state == "LANDING" and self.target_pos:
+            elif self.state == "LANDING":
+                if not self.target_pos:
+                    self.state = "FLYING"
+                    return
                 tx, ty = self.target_pos
                 dx, dy = tx - self.pos_x, ty - self.pos_y
                 if math.hypot(dx, dy) < 4:
@@ -685,10 +779,11 @@ class DragonPet(QWidget):
                 self.pos_y = float(screen.height() - self.height() - 10)
                 self.move(int(self.pos_x), int(self.pos_y))
         except Exception as e:
-            logging.warning(f"Ошибка физики: {e}")
+            log_msg(f"Сбой физики: {e}", "warning")
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
+            self.last_interaction = time.time()
             self.is_manual_dragging = True
             self.drag_pos = event.globalPos() - self.frameGeometry().topLeft()
 
@@ -708,13 +803,15 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     cfg_mgr = ConfigManager()
-    default_user = cfg_mgr.settings.get("user_name", "София")
+    default_user = cfg_mgr.settings.get("user_name", "")
 
     name, ok = QInputDialog.getText(
-        None, "Игнис", "Как обращаться?", text=default_user)
-    user_name = name.strip() if (ok and name.strip()) else default_user
+        None, cfg_mgr.settings.get("pet_name", "Игнис"),
+        "Как обращаться?", text=default_user)
+    user_name = name.strip() if (ok and name.strip()) else (default_user or "гость")
     cfg_mgr.settings["user_name"] = user_name
     cfg_mgr.save_settings()
+    log_msg(f"Пользователь: {user_name}")
 
     app_scanner = AbsoluteAppScanner()
     dragon_brain = DragonBrain(cfg_mgr, app_scanner)

@@ -1,0 +1,17 @@
+# Проверенный набор версий: Windows 10, Python 3.12.10, импорт main.py без ошибок.
+# Обычная установка: pip install -r requirements.txt
+# Если после обновления пакетов что-то сломалось - ставь этот файл целиком:
+#   pip install -r requirements-lock.txt
+# Получен из рабочего окружения командой pip freeze.
+certifi==2026.10.23
+charset-normalizer==3.5.2
+idna==3.20
+PyAudio==0.2.14
+PyQt5==5.15.11
+PyQt5-Qt5==5.15.2
+PyQt5_sip==12.20.0
+pywin32==312
+requests==2.34.2
+SpeechRecognition==3.17.0
+typing_extensions==4.16.0
+urllib3==2.8.0

@@ -1,6 +1,7 @@
 # Среда разработки
 .idea/
 .venv/
+.venv-*/
 venv/
 
 # Кэш Python

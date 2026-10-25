@@ -16,6 +16,14 @@ CACHE_FILE = "apps_cache.json"
 IGNORED_EXES = ("unins", "setup", "update", "crash",
                 "helper", "installer", " redist")
 
+# Системные протоколы Windows: открываются через os.startfile, а не .exe
+PROTOCOLS = {
+    "настройки": "ms-settings:",
+    "параметры": "ms-settings:",
+    "калькулятор": "calculator:",
+    "календарь": "outlookcal:",
+}
+
 
 class AbsoluteAppScanner:
     """Собирает абсолютные пути ко всем .exe приложениям ПК и запускает их."""
@@ -178,6 +186,10 @@ class AbsoluteAppScanner:
         target = query.lower().strip()
         mapped = aliases.get(target, target)
 
+        for key in (mapped, target):
+            if key in PROTOCOLS:
+                return PROTOCOLS[key]
+
         if mapped in self.apps:
             return self.apps[mapped]
         if target in self.apps:
@@ -197,8 +209,16 @@ class AbsoluteAppScanner:
     def launch_by_absolute_path(self, query: str, aliases: Dict[str, str]) -> Tuple[bool, str]:
         """Запускает программу строго по найденному абсолютному пути."""
         abs_path = self.find_absolute_path(query, aliases)
-        if not abs_path or not os.path.isfile(abs_path):
+        if not abs_path:
             return False, f"Не нашел исполняемый файл для «{query}» в базе путей."
+
+        # Протоколы вида ms-settings: запускаем через os.startfile
+        if not os.path.isfile(abs_path):
+            try:
+                os.startfile(abs_path)
+                return True, f"Открыл {abs_path}"
+            except Exception as e:
+                return False, f"Ошибка при запуске: {e}"
 
         try:
             work_dir = os.path.dirname(abs_path)
