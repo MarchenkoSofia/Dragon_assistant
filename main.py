@@ -23,23 +23,19 @@ from PyQt5.QtGui import QMovie, QPixmap, QPainter, QFont, QCursor, QTransform
 from brain import ConfigManager, DragonBrain
 from app_scanner import AbsoluteAppScanner
 from settings_ui import SettingsDialog
-import create_dragon_gifs
+try:
+    import create_dragon_gifs
+except ImportError:          # без Pillow остаемся на эмодзи-иконках
+    create_dragon_gifs = None
 
 # Анимации состояний: создаются create_dragon_gifs.py и лежат в gifs/
-GIF_FILES = {
-    "FLYING": "gifs/flying.gif",
-    "TO_MOUSE": "gifs/to_mouse.gif",
-    "SLEEPING": "gifs/sleeping.gif",
-    "EATING": "gifs/eating.gif",
-    "WINDOW_WALK": "gifs/window_walk.gif",
-    "BOTTOM_WALK": "gifs/bottom_walk.gif",
-    "DRAGGING_WIN": "gifs/dragging_win.gif",
-    "LANDING": "gifs/landing.gif",
-    "MEDIA": "gifs/media.gif",
-    "APP": "gifs/app.gif",
-    "CAMERA": "gifs/camera.gif",
-    "SEARCH": "gifs/search.gif",
-}
+if create_dragon_gifs:
+    GIF_FILES = create_dragon_gifs.GIF_FILES
+else:
+    GIF_FILES = {state: f"gifs/{state.lower()}.gif" for state in (
+        "FLYING", "TO_MOUSE", "SLEEPING", "EATING", "WINDOW_WALK",
+        "BOTTOM_WALK", "DRAGGING_WIN", "LANDING", "MEDIA", "APP",
+        "CAMERA", "SEARCH")}
 
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
 logging.basicConfig(
@@ -377,8 +373,25 @@ class VoiceListener(QObject):
                 time.sleep(2)
 
 
+# --- ПЕРЕРАСЦВЕТКА АНИМАЦИЙ (фоновый поток, чтобы интерфейс не замирал) ---
+class GifRepaintWorker(QObject):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, palette: dict) -> None:
+        super().__init__()
+        self.palette = dict(palette)
+
+    def run(self) -> None:
+        try:
+            create_dragon_gifs.generate_all_gifs(self.palette)
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
 # --- ГЛАВНЫЙ КЛАСС ПИТОМЦА ---
 class DragonPet(QWidget):
+
     def __init__(self, cfg: ConfigManager, scanner: AbsoluteAppScanner, brain: DragonBrain, hud: CornerChatHUD) -> None:
         super().__init__()
         self.cfg = cfg
@@ -410,6 +423,12 @@ class DragonPet(QWidget):
         self.visual_state = "FLYING"
         self.movie: Optional[QMovie] = None
         self.current_gif = ""
+        # Расцветка, с которой сейчас нарисованы gifs, и фоновый перерисовщик
+        self.applied_palette = create_dragon_gifs.normalize_palette(
+            self.cfg.settings.get("dragon_colors", {})) if create_dragon_gifs else {}
+        self.gif_worker = None
+        self.painter_thread = None
+        self.pending_palette = None
 
         self.init_ui()
         self.init_timers()
@@ -525,9 +544,47 @@ class DragonPet(QWidget):
         """Вызывается при движении ползунков в окне настроек."""
         sz = int(self.cfg.settings.get("dragon_size", 110))
         self.resize(sz, sz)
+        # расцветку тоже применяем на лету: смена цвета перерисовывает gifs
+        self.request_palette_repaint()
         # анимацию перечитываем: путь мог поменяться, кадр нужен уже нового размера
         self.set_visual_state(self.visual_state)
         self.hud.apply_dynamic_styles()
+
+    # --- РАСЦВЕТКА ДРАКОНА (меняется прямо в окне настроек) ---
+    def request_palette_repaint(self) -> None:
+        """Если пользователь поменял цвета в окне настроек - перерисовываем комплект."""
+        if create_dragon_gifs is None:
+            return
+        palette = create_dragon_gifs.normalize_palette(
+            self.cfg.settings.get("dragon_colors", {}))
+        if palette == self.applied_palette:
+            return
+        self.pending_palette = palette
+        if self.painter_thread and self.painter_thread.is_alive():
+            return  # дождёмся конца и перерисуем самой последней палитрой
+        self._start_palette_paint()
+
+    def _start_palette_paint(self) -> None:
+        palette = self.pending_palette
+        self.pending_palette = None
+        self.applied_palette = palette
+        worker = GifRepaintWorker(palette)
+        worker.finished.connect(self._on_palette_painted)
+        self.gif_worker = worker  # не даём сборщику мусора убрать сигнал
+        self.painter_thread = threading.Thread(target=worker.run, daemon=True)
+        log_msg("Меняю расцветку анимаций...")
+        self.painter_thread.start()
+
+    def _on_palette_painted(self, ok: bool, err: str) -> None:
+        self.painter_thread = None
+        if ok:
+            self.current_gif = ""  # файлы перезаписаны - перечитываем анимацию
+            self.set_visual_state(self.visual_state)
+            log_msg(f"Расцветка обновлена, активно анимаций: {self.active_animations()}")
+        else:
+            log_msg(f"Не удалось перерисовать анимации: {err}", "error")
+        if self.pending_palette is not None:
+            self._start_palette_paint()
 
     def open_settings_dialog(self) -> None:
         if not self.settings_dlg:
@@ -875,17 +932,20 @@ class DragonPet(QWidget):
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-    # Если комплекта анимаций ещё нет — рисуем его сами (нужен Pillow).
-    # Без Pillow дракон летает с эмодзи-иконкой, программа при этом не падает.
-    if not os.path.exists(GIF_FILES["FLYING"]):
-        try:
-            create_dragon_gifs.generate_all_gifs()
-        except Exception as e:
-            log_msg(f"Не удалось сгенерировать анимации: {e}", "error")
-
     app = QApplication(sys.argv)
 
     cfg_mgr = ConfigManager()
+
+    # Если комплекта анимаций ещё нет (или вшита другая расцветка) - рисуем сами.
+    # Без Pillow дракон летает с эмодзи-иконкой, программа при этом не падает.
+    try:
+        if create_dragon_gifs and create_dragon_gifs.needs_repaint(
+                cfg_mgr.settings.get("dragon_colors", {})):
+            create_dragon_gifs.generate_all_gifs(
+                cfg_mgr.settings.get("dragon_colors", {}))
+    except Exception as e:
+        log_msg(f"Не удалось сгенерировать анимации: {e}", "error")
+
     default_user = cfg_mgr.settings.get("user_name", "")
 
     name, ok = QInputDialog.getText(

@@ -5,8 +5,14 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
+from PyQt5.QtGui import QColor
+
 from brain import ConfigManager
 from app_scanner import AbsoluteAppScanner
+try:
+    import create_dragon_gifs
+except ImportError:          # без Pillow нет ни анимаций, ни смены расцветки
+    create_dragon_gifs = None
 
 
 class SettingsDialog(QDialog):
@@ -118,6 +124,28 @@ class SettingsDialog(QDialog):
         color_layout.addWidget(btn_dragon_col)
         layout.addLayout(color_layout)
 
+        # --- РАСЦВЕТКА ДРАКОНА (анимации перерисовываются на лету) ---
+        if create_dragon_gifs:
+            dragon_group = QGroupBox("Расцветка дракона")
+            dragon_form = QFormLayout(dragon_group)
+            self.dragon_btns = {}
+            keys = list(create_dragon_gifs.PALETTE_KEYS)
+            for i in range(0, len(keys), 3):
+                row = QHBoxLayout()
+                for key in keys[i:i + 3]:
+                    btn = QPushButton()
+                    btn.setMinimumHeight(42)
+                    self.dragon_btns[key] = btn
+                    btn.clicked.connect(
+                        lambda _, k=key, b=btn: self._pick_dragon_color(k, b))
+                    self._paint_color_button(btn, key)
+                    row.addWidget(btn)
+                dragon_form.addRow(row)
+            reset_btn = QPushButton("↺ Вернуть родную расцветку")
+            reset_btn.clicked.connect(self._reset_dragon_colors)
+            dragon_form.addRow(reset_btn)
+            layout.addWidget(dragon_group)
+
         # Кнопка пересборки абсолютных путей
         self.rescan_btn = QPushButton(
             f"🔄 Пересобрать пути к .exe (В базе: {len(self.scanner.apps)})")
@@ -170,6 +198,42 @@ class SettingsDialog(QDialog):
             self.cfg.settings.setdefault("colors", {})[key] = col.name()
             self.cfg.save_settings()
             self.on_update()
+
+    # --- РАСЦВЕТКА ДРАКОНА ---
+    def _dragon_palette(self) -> dict:
+        return create_dragon_gifs.normalize_palette(
+            self.cfg.settings.get("dragon_colors", {}))
+
+    def _paint_color_button(self, btn: QPushButton, key: str) -> None:
+        hexc = self._dragon_palette().get(
+            key) or create_dragon_gifs.DEFAULT_PALETTE[key]
+        r, g, b = create_dragon_gifs.hex_to_rgb(hexc)
+        # на светлом образце текст должен быть темным, иначе его не прочитать
+        text_col = "#101018" if (0.299 * r + 0.587 * g + 0.114 * b) > 150 else "#FFFFFF"
+        btn.setText(f"{create_dragon_gifs.PALETTE_NAMES[key]}\n{hexc}")
+        btn.setStyleSheet(
+            f"background-color: {hexc}; color: {text_col}; border: 1px solid #FF9900;"
+            " border-radius: 6px; padding: 3px 4px; font-weight: bold;")
+
+    def _pick_dragon_color(self, key: str, btn: QPushButton) -> None:
+        current = self._dragon_palette().get(
+            key) or create_dragon_gifs.DEFAULT_PALETTE[key]
+        col = QColorDialog.getColor(
+            QColor(current), self, create_dragon_gifs.PALETTE_NAMES[key])
+        if not col.isValid():
+            return
+        self.cfg.settings.setdefault("dragon_colors", {})[key] = col.name()
+        self.cfg.save_settings()
+        self._paint_color_button(btn, key)
+        self.on_update()
+
+    def _reset_dragon_colors(self) -> None:
+        self.cfg.settings["dragon_colors"] = dict(
+            create_dragon_gifs.DEFAULT_PALETTE)
+        self.cfg.save_settings()
+        for key, btn in self.dragon_btns.items():
+            self._paint_color_button(btn, key)
+        self.on_update()
 
     def _rescan_apps(self) -> None:
         count = self.scanner.rescan_all()

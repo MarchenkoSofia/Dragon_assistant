@@ -1,6 +1,7 @@
 import os
 import sys
 import math
+import json
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -33,6 +34,110 @@ C_FIRE = (255, 230, 40)       # Яркое пламя
 C_EMBER = (255, 100, 0)       # Жар / уголь
 C_CYAN = (0, 210, 255)        # Эффекты воздуха / пота / технологий
 C_PURPLE = (180, 110, 255)    # Магия и сон
+
+# --- Палитра, доступная из интерфейса -------------------------------------
+# Тот же набор цветов, что константы выше, но в hex-виде: его показывает окно
+# настроек и хранит settings.json (ключ "dragon_colors"). Ключ -> константа модуля.
+PALETTE_KEYS = {
+    "body": "C_BODY",
+    "dark": "C_DARK",
+    "belly": "C_BELLY",
+    "wing": "C_WING_MEM",
+    "eye": "C_EYE",
+    "fire": "C_FIRE",
+}
+PALETTE_NAMES = {
+    "body": "Чешуя",
+    "dark": "Тени и гребни",
+    "belly": "Брюшко",
+    "wing": "Перепонки",
+    "eye": "Глаза",
+    "fire": "Пламя",
+}
+DEFAULT_PALETTE = {
+    "body": "#e1303e",
+    "dark": "#9b1623",
+    "belly": "#ffcd55",
+    "wing": "#fa821e",
+    "eye": "#00f5d4",
+    "fire": "#ffe628",
+}
+
+# Анимация для каждого состояния; main.py берет эту же карту
+GIF_FILES = {
+    "FLYING": f"{GIF_DIR}/flying.gif",
+    "TO_MOUSE": f"{GIF_DIR}/to_mouse.gif",
+    "SLEEPING": f"{GIF_DIR}/sleeping.gif",
+    "EATING": f"{GIF_DIR}/eating.gif",
+    "WINDOW_WALK": f"{GIF_DIR}/window_walk.gif",
+    "BOTTOM_WALK": f"{GIF_DIR}/bottom_walk.gif",
+    "DRAGGING_WIN": f"{GIF_DIR}/dragging_win.gif",
+    "LANDING": f"{GIF_DIR}/landing.gif",
+    "MEDIA": f"{GIF_DIR}/media.gif",
+    "APP": f"{GIF_DIR}/app.gif",
+    "CAMERA": f"{GIF_DIR}/camera.gif",
+    "SEARCH": f"{GIF_DIR}/search.gif",
+}
+# Какая палитра последний раз вшита в gifs/
+PALETTE_FILE = f"{GIF_DIR}/palette.json"
+
+
+def hex_to_rgb(value: str):
+    v = str(value).strip().lstrip("#")
+    if len(v) == 3:
+        v = "".join(c * 2 for c in v)
+    if len(v) != 6 or any(c not in "0123456789abcdefABCDEF" for c in v):
+        raise ValueError(f"не цвет в формате #RRGGBB: {value!r}")
+    return tuple(int(v[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def rgb_to_hex(rgb) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*tuple(rgb)[:3])
+
+
+def normalize_palette(colors) -> dict:
+    """Оставляет только известные ключи и только в hex-виде; битое значение пропускаем."""
+    out = {}
+    for key in PALETTE_KEYS:
+        value = (colors or {}).get(key)
+        if not value:
+            continue
+        try:
+            out[key] = rgb_to_hex(hex_to_rgb(value))
+        except ValueError as e:
+            _say(f"Пропускаю цвет {key}: {e}")
+    return out
+
+
+def apply_palette(colors=None) -> dict:
+    """Меняет константы модуля; рисующие функции читают их в момент вызова."""
+    full = dict(DEFAULT_PALETTE)
+    full.update(normalize_palette(colors))
+    for key, const in PALETTE_KEYS.items():
+        globals()[const] = hex_to_rgb(full[key])
+    return full
+
+
+def saved_palette() -> dict:
+    """Палитра, с которой последний раз рисовали gifs (пустой словарь = метки нет)."""
+    try:
+        with open(PALETTE_FILE, "r", encoding="utf-8") as f:
+            return normalize_palette(json.load(f))
+    except Exception:
+        return {}
+
+
+def needs_repaint(colors=None) -> bool:
+    """Рисовать заново? Да, если гифок нет или вшита другая палитра. Нарисованные
+    вручную гифки без метки палитры не трогаем."""
+    if not os.path.isfile(GIF_FILES["FLYING"]):
+        return True
+    have = saved_palette()
+    if not have:
+        return False
+    want = dict(DEFAULT_PALETTE)
+    want.update(normalize_palette(colors))
+    return {k: have.get(k) for k in want} != want
 
 
 def save_clean_gif(frames, filepath, duration=95):
@@ -453,34 +558,35 @@ def make_search():
     return frames
 
 
-def generate_all_gifs():
-    """Генерирует полный комплект из 12 GIF-файлов для всех состояний."""
+def generate_all_gifs(colors=None) -> None:
+    """Генерирует полный комплект из 12 GIF-файлов; colors - палитра из настроек
+    (None = палитра по умолчанию). Заодно помечает в gifs/palette.json, какая
+    палитра вшита, чтобы при следующем запуске не перерисовывать зря."""
+    applied = apply_palette(colors)
     os.makedirs(GIF_DIR, exist_ok=True)
     flying = make_flying()
     save_clean_gif(flying, "dragon.gif")
-    save_clean_gif(flying, os.path.join(GIF_DIR, "flying.gif"))
-    save_clean_gif(make_to_mouse(), os.path.join(
-        GIF_DIR, "to_mouse.gif"), duration=65)
-    save_clean_gif(make_sleeping(), os.path.join(
-        GIF_DIR, "sleeping.gif"), duration=130)
-    save_clean_gif(make_eating(), os.path.join(
-        GIF_DIR, "eating.gif"), duration=95)
-    save_clean_gif(make_walk(True), os.path.join(
-        GIF_DIR, "window_walk.gif"), duration=90)
-    save_clean_gif(make_walk(False), os.path.join(
-        GIF_DIR, "bottom_walk.gif"), duration=90)
-    save_clean_gif(make_dragging(), os.path.join(
-        GIF_DIR, "dragging_win.gif"), duration=85)
-    save_clean_gif(make_landing(), os.path.join(
-        GIF_DIR, "landing.gif"), duration=95)
-    save_clean_gif(make_media(), os.path.join(
-        GIF_DIR, "media.gif"), duration=95)
-    save_clean_gif(make_app(), os.path.join(GIF_DIR, "app.gif"), duration=85)
-    save_clean_gif(make_camera(), os.path.join(
-        GIF_DIR, "camera.gif"), duration=90)
-    save_clean_gif(make_search(), os.path.join(
-        GIF_DIR, "search.gif"), duration=100)
+    save_clean_gif(flying, GIF_FILES["FLYING"])
+    save_clean_gif(make_to_mouse(), GIF_FILES["TO_MOUSE"], duration=65)
+    save_clean_gif(make_sleeping(), GIF_FILES["SLEEPING"], duration=130)
+    save_clean_gif(make_eating(), GIF_FILES["EATING"], duration=95)
+    save_clean_gif(make_walk(True), GIF_FILES["WINDOW_WALK"], duration=90)
+    save_clean_gif(make_walk(False), GIF_FILES["BOTTOM_WALK"], duration=90)
+    save_clean_gif(make_dragging(), GIF_FILES["DRAGGING_WIN"], duration=85)
+    save_clean_gif(make_landing(), GIF_FILES["LANDING"], duration=95)
+    save_clean_gif(make_media(), GIF_FILES["MEDIA"], duration=95)
+    save_clean_gif(make_app(), GIF_FILES["APP"], duration=85)
+    save_clean_gif(make_camera(), GIF_FILES["CAMERA"], duration=90)
+    save_clean_gif(make_search(), GIF_FILES["SEARCH"], duration=100)
+    with open(PALETTE_FILE, "w", encoding="utf-8") as f:
+        json.dump(applied, f, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
-    generate_all_gifs()
+    # Из консоли рисуем с той же расцветкой, что показывает интерфейс
+    try:
+        with open("settings.json", "r", encoding="utf-8") as f:
+            start_palette = json.load(f).get("dragon_colors", {})
+    except Exception:
+        start_palette = {}
+    generate_all_gifs(start_palette)
